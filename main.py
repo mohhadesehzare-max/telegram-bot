@@ -7,8 +7,8 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 from groq import Groq
 
-# توکن ربات تلگرام شما
-TOKEN = "8867163203:AAERfsDsT_4bS1FhGXZBkncqYdWbk8oS7vk"
+# توکن ربات جدید شما
+TOKEN = "8977278269:AAH4NSZRyu_X2L5ea1hLEBU0LP5DpWvftss"
 
 # کلید Groq شما
 GROQ_API_KEY = "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"
@@ -31,7 +31,7 @@ def transcribe_file(path: str) -> str:
 async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
     file = None
-    suffix = ".ogg"  # <--- این خط اصلاح شد (قبلاً .oga بود)
+    suffix = ".ogg"  # برای سازگاری با Groq
     
     if msg.voice:
         file = await msg.voice.get_file()
