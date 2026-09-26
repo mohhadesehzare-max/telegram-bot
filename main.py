@@ -1,4 +1,3 @@
-
 import os
 import threading
 import tempfile
@@ -8,7 +7,10 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 from groq import Groq
 
+# توکن تلگرام شما
 TOKEN = "8867163203:AAERfsDsT_4bS1FhGXZBkncqYdWbk8oS7vk"
+
+# کلید Groq شما
 GROQ_API_KEY = "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"
 
 client = Groq(api_key=GROQ_API_KEY)
