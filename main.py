@@ -7,7 +7,7 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 from groq import Groq
 
-# توکن تلگرام شما
+# توکن ربات تلگرام شما
 TOKEN = "8867163203:AAERfsDsT_4bS1FhGXZBkncqYdWbk8oS7vk"
 
 # کلید Groq شما
@@ -31,7 +31,8 @@ def transcribe_file(path: str) -> str:
 async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
     file = None
-    suffix = ".oga"
+    suffix = ".ogg"  # <--- این خط اصلاح شد (قبلاً .oga بود)
+    
     if msg.voice:
         file = await msg.voice.get_file()
     elif msg.audio:
@@ -59,7 +60,6 @@ async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if os.path.exists(tmp.name):
             os.remove(tmp.name)
 
-# وب سرور برای اینکه رندر فکر نکنه برنامه کرش کرده
 def run_web():
     port = int(os.environ.get("PORT", 8080))
     class H(BaseHTTPRequestHandler):
