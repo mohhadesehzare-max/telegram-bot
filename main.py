@@ -20,15 +20,11 @@ GROQ_API_KEY = "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"
 
 client = Groq(api_key=GROQ_API_KEY)
 
-# لیست مدل‌های جدید Groq - به ترتیب امتحان می‌شن
 MODELS_TO_TRY = [
     "llama-3.3-70b-versatile",
-    "llama-3.1-8b-instant",
     "openai/gpt-oss-120b",
     "openai/gpt-oss-20b",
     "meta-llama/llama-4-scout-17b-16e-instruct",
-    "qwen/qwen3-32b",
-    "moonshotai/kimi-k2-instruct",
 ]
 
 def call_ai(messages, temperature=0):
@@ -44,7 +40,7 @@ def call_ai(messages, temperature=0):
         except Exception as e:
             last_error = str(e)
             continue
-    return f"[خطا: هیچ مدلی جواب نداد. آخرین خطا: {last_error}]"
+    return f"[خطا: {last_error}]"
 
 def split_audio(path: str) -> list:
     output_dir = tempfile.mkdtemp()
@@ -73,10 +69,12 @@ def split_audio(path: str) -> list:
 def transcribe_chunk(chunk_path: str, language: str) -> str:
     try:
         with open(chunk_path, "rb") as f:
+            # پرامپت ویژه برای آهنگ - کوتاه و دقیق
             result = client.audio.transcriptions.create(
                 file=(os.path.basename(chunk_path), f.read()),
                 model="whisper-large-v3",
                 language=language,
+                prompt="lyrics:",  # پرامپت کلیدی برای آهنگ
                 response_format="text",
                 temperature=0,
             )
