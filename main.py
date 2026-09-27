@@ -10,13 +10,6 @@ from telegram.ext import (
 )
 from groq import Groq
 
-try:
-    from shazamio import Shazam
-    shazam = Shazam()
-    SHAZAM_OK = True
-except Exception:
-    SHAZAM_OK = False
-
 TOKEN = "8977278269:AAH4NSZRyu_X2L5ea1hLEBU0LP5DpWvftss"
 GROQ_API_KEY = "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"
 
@@ -105,21 +98,6 @@ def translate_text(text: str, target_lang: str) -> str:
             translated_chunks.append("[ترجمه ناموفق بود]")
     return "\n".join(translated_chunks)
 
-async def recognize_song(path: str):
-    if not SHAZAM_OK:
-        return None
-    try:
-        out = await shazam.recognize(path)
-        if out and 'track' in out:
-            track = out['track']
-            title = track.get('title', 'نامشخص')
-            subtitle = track.get('subtitle', 'نامشخص')
-            url = track.get('url', '')
-            return f"🎵 آهنگ پیدا شد!\n\n🎤 خواننده: {subtitle}\n🎶 نام آهنگ: {title}\n🔗 لینک: {url}"
-    except Exception:
-        pass
-    return None
-
 async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
     lang = context.user_data.get('language')
@@ -146,11 +124,6 @@ async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tmp.close()
     try:
         await file.download_to_drive(custom_path=tmp.name)
-
-        song = await recognize_song(tmp.name)
-        if song:
-            await msg.reply_text(song)
-            return
 
         text = await asyncio.to_thread(transcribe_audio, tmp.name, lang)
         if not text:
