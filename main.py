@@ -10,13 +10,20 @@ from telegram.ext import (
 )
 from groq import Groq
 
+try:
+    from shazamio import Shazam
+    shazam = Shazam()
+    SHAZAM_OK = True
+except Exception:
+    SHAZAM_OK = False
+
 TOKEN = "8977278269:AAH4NSZRyu_X2L5ea1hLEBU0LP5DpWvftss"
 GROQ_API_KEY = "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"
 
 client = Groq(api_key=GROQ_API_KEY)
 
 PERSIAN_PROMPT = "این فایل صوتی درباره کتاب، درس، تدریس، ریاضی، فیزیک، شیمی، زیست، پزشکی، مهندسی، برنامه‌نویسی، ادبیات، تاریخ، اقتصاد، حقوق، فلسفه، روانشناسی، مدیریت، اصطلاحات علمی، تخصصی و دانشگاهی است. کلمات را با املای صحیح فارسی بنویس."
-ENGLISH_PROMPT = "This audio is about a course, book, teaching, mathematics, physics, chemistry, biology, medicine, engineering, programming, literature, history, economics, law, philosophy, psychology, management, and academic technical terms. Please transcribe accurately with correct spelling."
+ENGLISH_PROMPT = "This audio is about a course, book, teaching, mathematics, physics, chemistry, biology, medicine, engineering, programming, literature, history, economics, law, philosophy, psychology, management, and academic technical terms. Please transcribe accurately."
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
@@ -51,11 +58,25 @@ def transcribe_audio(path: str, language: str) -> str:
         )
     return result.strip()
 
-def normalize_persian(text: str) -> str:
-    replacements = {'ي': 'ی', 'ك': 'ک', 'ة': 'ه'}
-    for ar, fa in replacements.items():
-        text = text.replace(ar, fa)
-    return ' '.join(text.split())
+def fix_persian_text(text: str) -> str:
+    if not text.strip():
+        return text
+    chunks = [text[i:i + 3000] for i in range(0, len(text), 3000)]
+    fixed_chunks = []
+    for chunk in chunks:
+        try:
+            response = client.chat.completions.create(
+                model="llama-3.1-8b-instant",
+                messages=[
+                    {"role": "system", "content": "تو یک ویراستار حرفه‌ای فارسی هستی. متن زیر را ویرایش کن: غلط‌های املایی را اصلاح کن، فاصله و نیم‌فاصله‌ها را درست کن، حروف عربی (ي، ك، ة) را به فارسی (ی، ک، ه) تبدیل کن، اما معنی و اصطلاحات تخصصی را تغییر نده. فقط متن ویرایش‌شده را برگردان، بدون هیچ توضیح اضافه."},
+                    {"role": "user", "content": chunk}
+                ],
+                temperature=0,
+            )
+            fixed_chunks.append(response.choices[0].message.content.strip())
+        except Exception:
+            fixed_chunks.append(chunk)
+    return "\n".join(fixed_chunks)
 
 def translate_text(text: str, target_lang: str) -> str:
     if target_lang == 'fa':
@@ -70,12 +91,34 @@ def translate_text(text: str, target_lang: str) -> str:
             "Keep technical and academic terms. "
             "Only output the translation and nothing else:\n\n"
         )
-    response = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[{"role": "user", "content": instruction + text}],
-        temperature=0,
-    )
-    return response.choices[0].message.content.strip()
+    chunks = [text[i:i + 3000] for i in range(0, len(text), 3000)]
+    translated_chunks = []
+    for chunk in chunks:
+        try:
+            response = client.chat.completions.create(
+                model="llama-3.1-8b-instant",
+                messages=[{"role": "user", "content": instruction + chunk}],
+                temperature=0,
+            )
+            translated_chunks.append(response.choices[0].message.content.strip())
+        except Exception:
+            translated_chunks.append("[ترجمه ناموفق بود]")
+    return "\n".join(translated_chunks)
+
+async def recognize_song(path: str):
+    if not SHAZAM_OK:
+        return None
+    try:
+        out = await shazam.recognize(path)
+        if out and 'track' in out:
+            track = out['track']
+            title = track.get('title', 'نامشخص')
+            subtitle = track.get('subtitle', 'نامشخص')
+            url = track.get('url', '')
+            return f"🎵 آهنگ پیدا شد!\n\n🎤 خواننده: {subtitle}\n🎶 نام آهنگ: {title}\n🔗 لینک: {url}"
+    except Exception:
+        pass
+    return None
 
 async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
@@ -97,20 +140,26 @@ async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         return
 
-    await msg.reply_text("📥 دریافت شد. در حال تبدیل به متن...")
+    await msg.reply_text("📥 دریافت شد. در حال پردازش...")
 
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
     tmp.close()
     try:
         await file.download_to_drive(custom_path=tmp.name)
-        text = await asyncio.to_thread(transcribe_audio, tmp.name, lang)
 
+        song = await recognize_song(tmp.name)
+        if song:
+            await msg.reply_text(song)
+            return
+
+        text = await asyncio.to_thread(transcribe_audio, tmp.name, lang)
         if not text:
             await msg.reply_text("❌ چیزی تشخیص داده نشد.")
             return
 
         if lang == 'fa':
-            text = normalize_persian(text)
+            await msg.reply_text("✏️ در حال ویرایش و اصلاح متن...")
+            text = await asyncio.to_thread(fix_persian_text, text)
 
         context.user_data['last_text'] = text
         context.user_data['last_lang'] = lang
@@ -118,12 +167,15 @@ async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for i in range(0, len(text), 4000):
             await msg.reply_text(text[i:i + 4000])
 
-        target = 'en' if lang == 'fa' else 'fa'
-        button_text = "🌐 ترجمه به انگلیسی" if target == 'en' else "🌐 ترجمه به فارسی"
-        keyboard = [[InlineKeyboardButton(button_text, callback_data=f'trans_{target}')]]
+        buttons = []
+        if lang == 'fa':
+            buttons.append([InlineKeyboardButton("🌐 ترجمه به انگلیسی", callback_data='trans_en')])
+        else:
+            buttons.append([InlineKeyboardButton("🌐 ترجمه به فارسی", callback_data='trans_fa')])
+
         await msg.reply_text(
             "برای ترجمه، روی دکمه زیر بزنید:",
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            reply_markup=InlineKeyboardMarkup(buttons)
         )
 
     except Exception as e:
