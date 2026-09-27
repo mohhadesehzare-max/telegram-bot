@@ -2,6 +2,9 @@ import os
 import threading
 import tempfile
 import asyncio
+import glob
+import subprocess
+import static_ffmpeg
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -10,37 +13,77 @@ from telegram.ext import (
 )
 from groq import Groq
 
+static_ffmpeg.add_paths()
+
 TOKEN = "8977278269:AAH4NSZRyu_X2L5ea1hLEBU0LP5DpWvftss"
 GROQ_API_KEY = "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"
 
 client = Groq(api_key=GROQ_API_KEY)
 
-MODELS_TO_TRY = [
-    "llama-3.1-8b-instant",
-    "llama-3.3-70b-versatile",
-    "llama-3.1-70b-versatile",
-    "mixtral-8x7b-32768",
-    "openai/gpt-oss-20b",
-    "meta-llama/llama-4-scout-17b-16e-instruct",
-]
-
 PERSIAN_PROMPT = "این فایل صوتی درباره کتاب، درس، تدریس، ریاضی، فیزیک، شیمی، زیست، پزشکی، مهندسی، برنامه‌نویسی، ادبیات، تاریخ، اقتصاد، حقوق، فلسفه، روانشناسی، مدیریت، اصطلاحات علمی، تخصصی و دانشگاهی است. کلمات را با املای صحیح فارسی بنویس."
-ENGLISH_PROMPT = "This audio is about a course, book, teaching, mathematics, physics, chemistry, biology, medicine, engineering, programming, literature, history, economics, law, philosophy, psychology, management, and academic technical terms. Please transcribe accurately."
+ENGLISH_PROMPT = "This is an academic lecture about course materials, textbooks, teaching, mathematics, physics, chemistry, biology, medicine, engineering, computer science, programming, literature, history, economics, law, philosophy, psychology, management, and technical terminology. Please transcribe accurately with proper punctuation and correct spelling."
 
-def call_ai(messages, temperature=0):
-    last_error = None
-    for model_name in MODELS_TO_TRY:
-        try:
-            response = client.chat.completions.create(
-                model=model_name,
-                messages=messages,
-                temperature=temperature,
+def split_audio(path: str) -> list:
+    """تقسیم فایل صوتی به تکه‌های ۸ دقیقه‌ای"""
+    output_dir = tempfile.mkdtemp()
+    output_pattern = os.path.join(output_dir, "chunk_%03d.ogg")
+    try:
+        subprocess.run(
+            [
+                "ffmpeg", "-i", path,
+                "-f", "segment",
+                "-segment_time", "480",
+                "-c:a", "libopus",
+                "-b:a", "32k",
+                "-ar", "16000",
+                "-ac", "1",
+                output_pattern
+            ],
+            check=True,
+            capture_output=True,
+            timeout=600,
+        )
+        chunks = sorted(glob.glob(os.path.join(output_dir, "chunk_*.ogg")))
+        return chunks if chunks else [path]
+    except Exception:
+        return [path]
+
+def transcribe_chunk(chunk_path: str, language: str) -> str:
+    prompt = PERSIAN_PROMPT if language == 'fa' else ENGLISH_PROMPT
+    try:
+        with open(chunk_path, "rb") as f:
+            result = client.audio.transcriptions.create(
+                file=(os.path.basename(chunk_path), f.read()),
+                model="whisper-large-v3",
+                language=language,
+                prompt=prompt,
+                response_format="text",
+                temperature=0,
             )
-            return response.choices[0].message.content.strip()
-        except Exception as e:
-            last_error = str(e)
-            continue
-    return f"[خطا: هیچ مدلی جواب نداد. آخرین خطا: {last_error}]"
+        return result.strip()
+    except Exception:
+        return ""
+
+def transcribe_full(path: str, language: str) -> str:
+    chunks = split_audio(path)
+    all_text = []
+    for chunk in chunks:
+        text = transcribe_chunk(chunk, language)
+        if text:
+            all_text.append(text)
+        try:
+            if chunk != path and os.path.exists(chunk):
+                os.remove(chunk)
+        except Exception:
+            pass
+    return " ".join(all_text)
+
+def normalize_persian(text: str) -> str:
+    """اصلاح ساده حروف عربی به فارسی - بدون AI و بدون حذف محتوا"""
+    replacements = {'ي': 'ی', 'ك': 'ک', 'ة': 'ه'}
+    for ar, fa in replacements.items():
+        text = text.replace(ar, fa)
+    return ' '.join(text.split())
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
@@ -62,42 +105,23 @@ async def language_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"✅ زبان انتخاب شد: {lang_name}\n\nحالا فایل صوتی یا ویس خود را بفرستید."
     )
 
-def transcribe_audio(path: str, language: str) -> str:
-    prompt = PERSIAN_PROMPT if language == 'fa' else ENGLISH_PROMPT
-    with open(path, "rb") as f:
-        result = client.audio.transcriptions.create(
-            file=(os.path.basename(path), f.read()),
-            model="whisper-large-v3",
-            language=language,
-            prompt=prompt,
-            response_format="text",
-            temperature=0,
-        )
-    return result.strip()
-
-def fix_persian_text(text: str) -> str:
-    if not text.strip():
-        return text
-    chunks = [text[i:i + 3000] for i in range(0, len(text), 3000)]
-    fixed_chunks = []
-    for chunk in chunks:
-        result = call_ai([
-            {"role": "system", "content": "تو یک ویراستار حرفه‌ای فارسی هستی. متن زیر را ویرایش کن: غلط‌های املایی را اصلاح کن، فاصله و نیم‌فاصله‌ها را درست کن، حروف عربی (ي، ك، ة) را به فارسی (ی، ک، ه) تبدیل کن، اما معنی و اصطلاحات تخصصی را تغییر نده. فقط متن ویرایش‌شده را برگردان، بدون هیچ توضیح اضافه."},
-            {"role": "user", "content": chunk}
-        ])
-        fixed_chunks.append(result)
-    return "\n".join(fixed_chunks)
-
 def translate_text(text: str, target_lang: str) -> str:
     if target_lang == 'fa':
-        instruction = "متن زیر را به فارسی روان و دقیق ترجمه کن. اصطلاحات تخصصی و علمی را حفظ کن و بدون غلط املایی بنویس. فقط خود ترجمه را بنویس و هیچ توضیح اضافه‌ای نده:\n\n"
+        instruction = "متن زیر را به فارسی روان ترجمه کن و فقط خود ترجمه را بنویس:\n\n"
     else:
-        instruction = "Translate the following text into fluent and accurate English. Keep technical and academic terms. Only output the translation and nothing else:\n\n"
+        instruction = "Translate the following text into English. Only output the translation:\n\n"
     chunks = [text[i:i + 3000] for i in range(0, len(text), 3000)]
     translated_chunks = []
     for chunk in chunks:
-        result = call_ai([{"role": "user", "content": instruction + chunk}])
-        translated_chunks.append(result)
+        try:
+            response = client.chat.completions.create(
+                model="llama-3.1-8b-instant",
+                messages=[{"role": "user", "content": instruction + chunk}],
+                temperature=0,
+            )
+            translated_chunks.append(response.choices[0].message.content.strip())
+        except Exception as e:
+            translated_chunks.append(f"[خطا: {e}]")
     return "\n".join(translated_chunks)
 
 async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -120,21 +144,20 @@ async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         return
 
-    await msg.reply_text("📥 دریافت شد. در حال پردازش...")
+    await msg.reply_text("📥 دریافت شد. در حال پردازش... (فایل‌های طولانی چند دقیقه طول می‌کشه)")
 
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
     tmp.close()
     try:
         await file.download_to_drive(custom_path=tmp.name)
 
-        text = await asyncio.to_thread(transcribe_audio, tmp.name, lang)
+        text = await asyncio.to_thread(transcribe_full, tmp.name, lang)
         if not text:
             await msg.reply_text("❌ چیزی تشخیص داده نشد.")
             return
 
         if lang == 'fa':
-            await msg.reply_text("✏️ در حال ویرایش و اصلاح متن...")
-            text = await asyncio.to_thread(fix_persian_text, text)
+            text = normalize_persian(text)
 
         context.user_data['last_text'] = text
         context.user_data['last_lang'] = lang
