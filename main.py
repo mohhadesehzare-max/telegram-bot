@@ -15,8 +15,32 @@ GROQ_API_KEY = "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"
 
 client = Groq(api_key=GROQ_API_KEY)
 
+MODELS_TO_TRY = [
+    "llama-3.1-8b-instant",
+    "llama-3.3-70b-versatile",
+    "llama-3.1-70b-versatile",
+    "mixtral-8x7b-32768",
+    "openai/gpt-oss-20b",
+    "meta-llama/llama-4-scout-17b-16e-instruct",
+]
+
 PERSIAN_PROMPT = "این فایل صوتی درباره کتاب، درس، تدریس، ریاضی، فیزیک، شیمی، زیست، پزشکی، مهندسی، برنامه‌نویسی، ادبیات، تاریخ، اقتصاد، حقوق، فلسفه، روانشناسی، مدیریت، اصطلاحات علمی، تخصصی و دانشگاهی است. کلمات را با املای صحیح فارسی بنویس."
 ENGLISH_PROMPT = "This audio is about a course, book, teaching, mathematics, physics, chemistry, biology, medicine, engineering, programming, literature, history, economics, law, philosophy, psychology, management, and academic technical terms. Please transcribe accurately."
+
+def call_ai(messages, temperature=0):
+    last_error = None
+    for model_name in MODELS_TO_TRY:
+        try:
+            response = client.chat.completions.create(
+                model=model_name,
+                messages=messages,
+                temperature=temperature,
+            )
+            return response.choices[0].message.content.strip()
+        except Exception as e:
+            last_error = str(e)
+            continue
+    return f"[خطا: هیچ مدلی جواب نداد. آخرین خطا: {last_error}]"
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
@@ -57,45 +81,23 @@ def fix_persian_text(text: str) -> str:
     chunks = [text[i:i + 3000] for i in range(0, len(text), 3000)]
     fixed_chunks = []
     for chunk in chunks:
-        try:
-            response = client.chat.completions.create(
-                model="llama-3.1-8b-instant",
-                messages=[
-                    {"role": "system", "content": "تو یک ویراستار حرفه‌ای فارسی هستی. متن زیر را ویرایش کن: غلط‌های املایی را اصلاح کن، فاصله و نیم‌فاصله‌ها را درست کن، حروف عربی (ي، ك، ة) را به فارسی (ی، ک، ه) تبدیل کن، اما معنی و اصطلاحات تخصصی را تغییر نده. فقط متن ویرایش‌شده را برگردان، بدون هیچ توضیح اضافه."},
-                    {"role": "user", "content": chunk}
-                ],
-                temperature=0,
-            )
-            fixed_chunks.append(response.choices[0].message.content.strip())
-        except Exception:
-            fixed_chunks.append(chunk)
+        result = call_ai([
+            {"role": "system", "content": "تو یک ویراستار حرفه‌ای فارسی هستی. متن زیر را ویرایش کن: غلط‌های املایی را اصلاح کن، فاصله و نیم‌فاصله‌ها را درست کن، حروف عربی (ي، ك، ة) را به فارسی (ی، ک، ه) تبدیل کن، اما معنی و اصطلاحات تخصصی را تغییر نده. فقط متن ویرایش‌شده را برگردان، بدون هیچ توضیح اضافه."},
+            {"role": "user", "content": chunk}
+        ])
+        fixed_chunks.append(result)
     return "\n".join(fixed_chunks)
 
 def translate_text(text: str, target_lang: str) -> str:
     if target_lang == 'fa':
-        instruction = (
-            "متن زیر را به فارسی روان و دقیق ترجمه کن. "
-            "اصطلاحات تخصصی و علمی را حفظ کن و بدون غلط املایی بنویس. "
-            "فقط خود ترجمه را بنویس و هیچ توضیح اضافه‌ای نده:\n\n"
-        )
+        instruction = "متن زیر را به فارسی روان و دقیق ترجمه کن. اصطلاحات تخصصی و علمی را حفظ کن و بدون غلط املایی بنویس. فقط خود ترجمه را بنویس و هیچ توضیح اضافه‌ای نده:\n\n"
     else:
-        instruction = (
-            "Translate the following text into fluent and accurate English. "
-            "Keep technical and academic terms. "
-            "Only output the translation and nothing else:\n\n"
-        )
+        instruction = "Translate the following text into fluent and accurate English. Keep technical and academic terms. Only output the translation and nothing else:\n\n"
     chunks = [text[i:i + 3000] for i in range(0, len(text), 3000)]
     translated_chunks = []
     for chunk in chunks:
-        try:
-            response = client.chat.completions.create(
-                model="llama-3.1-8b-instant",
-                messages=[{"role": "user", "content": instruction + chunk}],
-                temperature=0,
-            )
-            translated_chunks.append(response.choices[0].message.content.strip())
-        except Exception:
-            translated_chunks.append("[ترجمه ناموفق بود]")
+        result = call_ai([{"role": "user", "content": instruction + chunk}])
+        translated_chunks.append(result)
     return "\n".join(translated_chunks)
 
 async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
